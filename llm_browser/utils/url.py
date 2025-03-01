@@ -1,0 +1,108 @@
+"""
+URL-related utility functions.
+"""
+
+from typing import Set
+import httpx
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+
+def normalize_url(url: str) -> str:
+    """
+    Normalize URL by removing fragments and normalizing other components.
+
+    This helps prevent duplicate cache entries for essentially the same page.
+
+    Args:
+        url: URL to normalize
+
+    Returns:
+        Normalized URL
+    """
+    try:
+        # Parse the URL
+        parsed = httpx.URL(url)
+
+        # Remove fragment
+        normalized = str(parsed.copy_with(fragment=""))
+
+        return normalized
+    except Exception:
+        # If parsing fails, return the original URL
+        return url
+
+
+def remove_tracking_params(url: str, tracking_params: Set[str] = None) -> str:
+    """
+    Remove common tracking parameters from URLs.
+
+    Args:
+        url: URL to clean
+        tracking_params: Set of parameter names to remove, or None for defaults
+
+    Returns:
+        URL with tracking parameters removed
+    """
+    if tracking_params is None:
+        tracking_params = {
+            "utm_source",
+            "utm_medium",
+            "utm_campaign",
+            "utm_term",
+            "utm_content",
+            "fbclid",
+            "gclid",
+            "msclkid",
+            "ref",
+            "source",
+            "campaign",
+        }
+
+    try:
+        # Parse the URL
+        parsed = urlparse(url)
+
+        # Parse the query parameters
+        query_params = parse_qs(parsed.query)
+
+        # Remove tracking parameters
+        filtered_params = {
+            k: v for k, v in query_params.items() if k not in tracking_params
+        }
+
+        # Rebuild the query string
+        query_string = urlencode(filtered_params, doseq=True) if filtered_params else ""
+
+        # Rebuild the URL
+        clean_url = urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                query_string,
+                parsed.fragment,
+            )
+        )
+
+        return clean_url
+    except Exception:
+        # If parsing fails, return the original URL
+        return url
+
+
+def is_valid_url(url: str) -> bool:
+    """
+    Check if a URL is valid.
+
+    Args:
+        url: URL to validate
+
+    Returns:
+        True if URL is valid, False otherwise
+    """
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except Exception:
+        return False
