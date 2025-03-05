@@ -50,9 +50,11 @@ class BrowserServer:
             whole_words: bool = False,
             prefer_raw: bool = None,
             include_navigation: bool = None,
+            content_priority: str = None,
+            github_raw_only: bool = None,
         ) -> str:
             """
-            Fetch a webpage and convert it to markdown, optionally filtering with grep-like functionality.
+            Fetch a webpage and convert it to markdown with advanced content filtering options.
 
             Args:
                 url: The URL to fetch
@@ -61,12 +63,16 @@ class BrowserServer:
                 invert_match: If True, show non-matching lines (like grep -v)
                 show_line_numbers: If True, show line numbers with results (like grep -n)
                 whole_words: If True, match whole words only (like grep -w)
-                prefer_raw: If True, use raw GitHub content when available (default: True)
-                include_navigation: If True, include navigation structure when available (default: True)
+                prefer_raw: If True, use raw GitHub content when available
+                include_navigation: If True, include navigation structure when available (set to True when navigating between pages or traversing a website)
+                content_priority: Content extraction strategy ("auto", "main", "article", "largest", "dense")
+                github_raw_only: If True, only return GitHub raw content (fail for other URLs)
             """
             # Use configuration defaults if not specified
             use_prefer_raw = prefer_raw if prefer_raw is not None else self.config.prefer_raw
             use_include_navigation = include_navigation if include_navigation is not None else self.config.include_navigation
+            use_content_priority = content_priority if content_priority is not None else self.config.content_priority
+            use_github_raw_only = github_raw_only if github_raw_only is not None else self.config.github_raw_only
             
             # Validate URL
             if not is_valid_url(url):
@@ -83,19 +89,30 @@ class BrowserServer:
                     filename = url.split("/")[-1].split("?")[0]
                     content = f"# {filename}\n\n{raw_content}"
                     return f"### Content from GitHub source: {url}\n\n{content}"
+                elif use_github_raw_only:
+                    return f"Failed to fetch raw content from GitHub URL: {url}"
                     
             # For non-GitHub URLs or if raw fetch failed, proceed normally
             # Normalize the URL before checking cache
             normalized_url = normalize_url(url)
 
-            # Check cache first
-            cached = self.db.get_cached_content(normalized_url)
+            # Check cache first with the current feature flags
+            cached = self.db.get_cached_content(
+                normalized_url, 
+                prefer_raw=use_prefer_raw, 
+                include_navigation=use_include_navigation,
+                content_priority=use_content_priority
+            )
 
             if cached:
                 content = cached["markdown_content"]
                 source = "cache"
                 html_content = cached.get("html_content", "")  # May need for navigation extraction
             else:
+                # Exit if github_raw_only is set and this isn't a GitHub URL
+                if use_github_raw_only and not is_github_url(url):
+                    return f"Error: github_raw_only is enabled, but {url} is not a GitHub URL"
+                
                 # Fetch and process if not in cache
                 html_content = await self._fetch_url(url)
                 if not html_content:
@@ -129,8 +146,15 @@ class BrowserServer:
                             title = extract_title(html_content) or raw_url.split("/")[-1]
                             content = f"# {title}\n\n{content}"
                         
-                        # Cache the results
-                        self.db.cache_content(normalized_url, html_content, content)
+                        # Cache the results with feature flags
+                        self.db.cache_content(
+                            normalized_url, 
+                            html_content, 
+                            content, 
+                            prefer_raw=use_prefer_raw, 
+                            include_navigation=use_include_navigation,
+                            content_priority=use_content_priority
+                        )
                         
                         source = "github_raw"
                         
@@ -141,8 +165,11 @@ class BrowserServer:
                 # Extract title
                 title = extract_title(html_content) or url
 
-                # Convert to markdown
-                markdown_content = html_to_markdown(html_content)
+                # Convert to markdown with content priority
+                markdown_content = html_to_markdown(
+                    html_content,
+                    content_priority=use_content_priority
+                )
                 
                 # Extract navigation if requested
                 if use_include_navigation:
@@ -155,8 +182,15 @@ class BrowserServer:
                 # Add title to the markdown
                 content = f"# {title}\n\n{markdown_content}"
 
-                # Cache the results with normalized URL
-                self.db.cache_content(normalized_url, html_content, content)
+                # Cache the results with feature flags
+                self.db.cache_content(
+                    normalized_url, 
+                    html_content, 
+                    content, 
+                    prefer_raw=use_prefer_raw, 
+                    include_navigation=use_include_navigation,
+                    content_priority=use_content_priority
+                )
 
                 source = "web"
 

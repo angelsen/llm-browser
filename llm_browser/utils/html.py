@@ -9,105 +9,303 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
 
-def html_to_markdown(html_content: str) -> str:
+def html_to_markdown(html_content: str, content_priority: str = "auto") -> str:
     """
-    Convert HTML content to markdown format using markdownify.
+    Convert HTML content to markdown format using markdownify with enhanced features.
 
-    This uses a specialized library for better conversion quality.
+    This uses a specialized library for better conversion quality with additional
+    content filtering and formatting improvements.
 
     Args:
         html_content: HTML content to convert
+        content_priority: Content extraction strategy ("auto", "main", "article", "largest", "dense")
+          - auto: Intelligently selects the best strategy based on page structure
+          - main: Prioritizes content in <main> tags (good for modern websites)
+          - article: Prioritizes content in <article> tags (good for blogs, news)
+          - largest: Prioritizes the largest content block by text size (good for legacy sites)
+          - dense: Prioritizes the densest content area (text vs HTML ratio) (good for text-heavy sites)
+          
+        Note: When navigating between pages or traversing website structures, use include_navigation=True
 
     Returns:
         Markdown representation of the HTML content
     """
     try:
-        # Parse with BeautifulSoup first to clean up the HTML
-        soup = BeautifulSoup(html_content, "html.parser")
-
-        # Remove unwanted elements
-        for tag in soup(
-            ["script", "style", "meta", "noscript", "iframe", "nav", "footer"]
-        ):
-            tag.decompose()
-
-        # Try to identify main content
-        main_content = None
-        for selector in ["main", "article", "#content", ".content", '[role="main"]']:
-            main_content = soup.select_one(selector)
-            if main_content:
-                break
-
-        # If no main content found, use body
-        if not main_content:
-            main_content = soup.body
-
-        # If still nothing found, use the entire document
-        if not main_content:
-            main_content = soup
-
-        # Convert to markdown with markdownify
-        markdown_content = md(str(main_content), heading_style="ATX")
-
+        # Extract main content based on the specified priority
+        main_content_html = extract_main_content(
+            html_content, 
+            content_priority=content_priority
+        )
+        
+        # Parse with BeautifulSoup for preprocessing
+        soup = BeautifulSoup(main_content_html, "html.parser")
+        
+        # Enhance code blocks with proper formatting and language hints
+        for pre in soup.find_all("pre"):
+            # Check if there's a code element inside
+            code = pre.find("code")
+            if code:
+                # Try to determine language from class
+                language = ""
+                if code.get("class"):
+                    for class_name in code.get("class"):
+                        if class_name.startswith(("language-", "lang-")):
+                            language = class_name.split("-")[1]
+                            break
+                
+                # Format according to CommonMark/GFM style
+                if language:
+                    # Add data attribute for markdownify to recognize
+                    pre["data-language"] = language
+                    
+                # Make sure pre block will have proper newlines
+                if not code.text.endswith("\n"):
+                    code.append("\n")
+        
+        # Enhance tables for better rendering
+        for table in soup.find_all("table"):
+            # Add a class for markdownify to recognize
+            table["class"] = table.get("class", []) + ["markdown-table"]
+            
+            # Make sure there are headers
+            if not table.find("thead"):
+                # If no thead but has rows, convert first row to thead
+                tbody = table.find("tbody")
+                if tbody and tbody.find("tr"):
+                    first_row = tbody.find("tr")
+                    # Create thead and append the first row
+                    thead = soup.new_tag("thead")
+                    thead.append(first_row.extract())
+                    table.insert(0, thead)
+            
+            # Convert td to th in the thead
+            thead = table.find("thead")
+            if thead:
+                for td in thead.find_all("td"):
+                    th = soup.new_tag("th")
+                    th.string = td.get_text()
+                    td.replace_with(th)
+        
+        # Convert to markdown with markdownify with improved settings
+        markdown_options = {
+            "heading_style": "ATX",  # Use # style headings
+            "strong_em_symbol": "*",  # Use * for emphasis
+            "strip": ["script", "style", "meta"],
+            "bullets": "-",  # Use - for bullet points
+            "code_language_callback": lambda el: el.get("data-language", ""),
+        }
+        
+        markdown_content = md(str(soup), **markdown_options)
+        
         # Post-process the markdown to improve formatting
+        # Fix code blocks - make sure they have proper spacing
+        markdown_content = re.sub(r"```(\w*)\n+", r"```\1\n", markdown_content)
+        markdown_content = re.sub(r"\n+```", r"\n```", markdown_content)
+        
+        # Fix lists - ensure proper spacing
+        markdown_content = re.sub(r"(\n- .*?\n)(?!\n|$|- )", r"\1\n", markdown_content)
+        
         # Remove excessive blank lines
         markdown_content = re.sub(r"\n{3,}", "\n\n", markdown_content)
-
+        
+        # Fix reference-style links
+        markdown_content = re.sub(r"\[([^\]]+)\]\[([^\]]+)\]", r"[\1](\2)", markdown_content)
+        
         return markdown_content
     except Exception as e:
         # Fallback to basic conversion if markdownify fails
-        print(f"Markdownify conversion failed: {e}")
+        print(f"Enhanced markdown conversion failed: {e}")
+        
+        try:
+            # Try standard markdownify as first fallback
+            soup = BeautifulSoup(html_content, "html.parser")
+            for tag in soup(["script", "style", "meta", "noscript", "iframe"]):
+                tag.decompose()
+                
+            return md(str(soup), heading_style="ATX")
+        except Exception:
+            # Basic text extraction as ultimate fallback
+            soup = BeautifulSoup(html_content, "html.parser")
+            for tag in soup(["script", "style", "meta", "noscript", "iframe"]):
+                tag.decompose()
 
-        # Basic fallback conversion
-        soup = BeautifulSoup(html_content, "html.parser")
-        for tag in soup(["script", "style", "meta", "noscript", "iframe"]):
-            tag.decompose()
-
-        text = soup.get_text(separator="\n", strip=True)
-        return text
+            text = soup.get_text(separator="\n", strip=True)
+            return text
 
 
-def extract_main_content(html: str) -> str:
+def extract_main_content(html: str, content_priority: str = "auto") -> str:
     """
-    Extract the main content from an HTML document.
+    Extract the main content from an HTML document with configurable priority.
 
-    Uses heuristics to find the main content area of a page.
+    Uses advanced heuristics to find the main content area of a page,
+    with support for different extraction strategies.
 
     Args:
         html: Raw HTML content
+        content_priority: Content extraction mode ("auto", "main", "article", "largest", "dense")
 
     Returns:
         HTML string of just the main content
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    # Remove unwanted elements
-    for tag in soup(
-        ["script", "style", "meta", "noscript", "iframe", "nav", "footer", "header"]
-    ):
+    # Remove clearly unwanted elements
+    for tag in soup(["script", "style", "meta", "noscript", "iframe"]):
         tag.decompose()
-
-    # Try different selectors for main content
-    selectors = [
-        "main",
-        "article",
-        "#content",
-        ".content",
-        ".main",
-        "#main",
-        '[role="main"]',
-        ".post",
-        ".entry",
-        ".blog-post",
+    
+    # Identify and mark navigation elements but don't remove them yet
+    navigation_elements = []
+    for nav in soup.find_all("nav"):
+        navigation_elements.append(nav)
+    
+    # Identify and mark header/footer elements but don't remove them yet
+    structural_elements = []
+    for tag in soup.find_all(["header", "footer"]):
+        structural_elements.append(tag)
+    
+    # Try to identify ad containers and comment sections
+    noise_elements = []
+    ad_selectors = [
+        ".ad", ".ads", ".advertisement", ".banner", 
+        "#ad", "#ads", "#advertisement",
+        '[id*="google_ads"]', '[class*="banner"]', '[id*="banner"]',
+        '[class*="advert"]', '[id*="advert"]'
     ]
-
-    for selector in selectors:
-        content = soup.select_one(selector)
-        if content and len(content.get_text(strip=True)) > 100:
-            return str(content)
-
-    # If no suitable element found, use the body
-    return str(soup.body or soup)
+    
+    comment_selectors = [
+        "#comments", ".comments", ".comment-section", ".user-comments",
+        '[id*="comment"]', '[class*="comment"]', ".discussion", "#discussion"
+    ]
+    
+    for selector in ad_selectors + comment_selectors:
+        for element in soup.select(selector):
+            noise_elements.append(element)
+    
+    # Store potential content sections with heuristic scores
+    content_candidates = []
+    
+    # Check explicit semantic elements
+    main_element = soup.find("main")
+    if main_element:
+        content_candidates.append((main_element, 100, "main"))
+    
+    article_elements = soup.find_all("article")
+    for article in article_elements:
+        # Give preference to longer articles
+        article_score = 90 + min(10, len(article.get_text(strip=True)) / 1000)
+        content_candidates.append((article, article_score, "article"))
+    
+    # Check common content selectors
+    for selector, score in [
+        ("#content", 80),
+        (".content", 75),
+        ("#main", 70),
+        (".main", 65),
+        ('[role="main"]', 60),
+        (".post", 55),
+        (".entry", 50),
+        (".blog-post", 50),
+        (".page-content", 48),
+        (".site-content", 45),
+        (".markdown-body", 95),  # GitHub's content class, high score
+    ]:
+        for element in soup.select(selector):
+            # Skip very small elements
+            if len(element.get_text(strip=True)) < 100:
+                continue
+            
+            # Skip elements that are clearly not main content 
+            if any(ancestor.name in ["nav", "header", "footer"] for ancestor in element.parents):
+                continue
+                
+            content_candidates.append((element, score, selector))
+    
+    # If we have fewer than 3 candidates or in "largest" or "dense" mode,
+    # analyze content relevance by text density and element size
+    if content_priority in ["largest", "dense"] or len(content_candidates) < 3:
+        # Find divs, sections and other containers with significant content
+        for tag_name in ["div", "section", "main", "td", "table"]:
+            for element in soup.find_all(tag_name):
+                # Skip small elements, navigation, headers, footers
+                if (len(element.get_text(strip=True)) < 200 or
+                    element in navigation_elements or 
+                    element in structural_elements or
+                    element in noise_elements):
+                    continue
+                    
+                # Calculate content metrics
+                text_length = len(element.get_text(strip=True))
+                link_count = len(element.find_all("a"))
+                element_html_length = len(str(element))
+                
+                # Skip if the element is too small
+                if element_html_length < 500:
+                    continue
+                
+                # Calculate element text density (text length vs HTML size)
+                text_density = text_length / element_html_length if element_html_length > 0 else 0
+                
+                # Calculate text-to-link ratio (to distinguish content from navigation)
+                if link_count > 0:
+                    text_to_link_ratio = text_length / link_count
+                else:
+                    text_to_link_ratio = text_length * 0.5  # Penalty for no links
+                
+                # Combine metrics with variable weight based on priority mode
+                if content_priority == "largest":
+                    # Prioritize size over density
+                    score = (text_length * 0.6) + (text_density * 20) + (text_to_link_ratio * 0.1)
+                elif content_priority == "dense":
+                    # Prioritize density over size
+                    score = (text_density * 50) + (text_to_link_ratio * 0.2) + (text_length * 0.01)
+                else:
+                    # Balanced approach
+                    score = (text_length * 0.3) + (text_density * 30) + (text_to_link_ratio * 0.15)
+                
+                # Normalize score to be comparable with selector-based scores
+                normalized_score = min(40, score / 50)
+                content_candidates.append((element, normalized_score, f"{tag_name}-heuristic"))
+    
+    # Apply content priority strategy
+    if content_priority == "main" and main_element:
+        selected_content = main_element
+    elif content_priority == "article" and article_elements:
+        # Find the largest article if there are multiple
+        selected_content = max(article_elements, key=lambda x: len(x.get_text(strip=True)))
+    elif content_candidates:
+        # Sort by score in descending order
+        content_candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        # Get the highest-scoring element
+        selected_content = content_candidates[0][0]
+        
+        # For debugging 
+        # top_candidates = content_candidates[:3]
+        # print(f"Selected content: {top_candidates[0][2]} (score: {top_candidates[0][1]:.2f})")
+        # for i, (_, score, name) in enumerate(top_candidates[1:], 2):
+        #     print(f"Candidate {i}: {name} (score: {score:.2f})")
+    else:
+        # Fallback to body without navigation elements
+        for nav in navigation_elements:
+            nav.decompose()
+        for elem in structural_elements:
+            elem.decompose()
+        for elem in noise_elements:
+            elem.decompose()
+        selected_content = soup.body or soup
+    
+    # Remove navigation, header, footer, and ads from the selected content
+    result_soup = BeautifulSoup(str(selected_content), "html.parser")
+    
+    # Remove obvious non-content elements from the selected content
+    for selector in [
+        "nav", "header", "footer", "aside", ".sidebar", "#sidebar",
+        *ad_selectors, *comment_selectors
+    ]:
+        for element in result_soup.select(selector):
+            element.decompose()
+    
+    return str(result_soup)
 
 
 def extract_title(html: str) -> Optional[str]:

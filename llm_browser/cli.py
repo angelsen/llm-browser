@@ -46,9 +46,20 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Disable automatic use of raw GitHub content",
     )
     server_parser.add_argument(
-        "--no-navigation", 
+        "--navigation", 
         action="store_true",
-        help="Disable extraction and inclusion of navigation structures",
+        help="Enable extraction and inclusion of navigation structures (useful when you need to navigate between pages or traverse a website)",
+    )
+    server_parser.add_argument(
+        "--content-priority",
+        choices=["auto", "main", "article", "largest", "dense"],
+        default="auto",
+        help="Content extraction priority mode (default: auto)",
+    )
+    server_parser.add_argument(
+        "--github-raw-only",
+        action="store_true",
+        help="Only return raw content from GitHub URLs, fail for others",
     )
 
     # Cache commands
@@ -60,6 +71,17 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     # Cache clear command
     cache_clear_parser = cache_subparsers.add_parser("clear", help="Clear the cache")
     cache_clear_parser.add_argument("--db-path", help="Custom path for the database")
+    
+    # Cache reset command
+    cache_reset_parser = cache_subparsers.add_parser(
+        "reset", help="Reset the database (deletes and recreates it)"
+    )
+    cache_reset_parser.add_argument("--db-path", help="Custom path for the database")
+    cache_reset_parser.add_argument(
+        "--force", 
+        action="store_true", 
+        help="Reset without confirmation"
+    )
 
     # Cache stats command
     cache_stats_parser = cache_subparsers.add_parser(
@@ -90,7 +112,9 @@ def main(args: Optional[List[str]] = None) -> int:
     config = BrowserConfig(
         custom_db_path=parsed_args.db_path if hasattr(parsed_args, "db_path") else None,
         prefer_raw=not parsed_args.no_raw if hasattr(parsed_args, "no_raw") else True,
-        include_navigation=not parsed_args.no_navigation if hasattr(parsed_args, "no_navigation") else True
+        include_navigation=parsed_args.navigation if hasattr(parsed_args, "navigation") else False,
+        content_priority=parsed_args.content_priority if hasattr(parsed_args, "content_priority") else "auto",
+        github_raw_only=parsed_args.github_raw_only if hasattr(parsed_args, "github_raw_only") else False
     )
 
     if parsed_args.command == "server":
@@ -111,6 +135,19 @@ def main(args: Optional[List[str]] = None) -> int:
         if parsed_args.cache_command == "clear":
             # Clear the cache
             print(server.db.clear_cache())
+            return 0
+            
+        elif parsed_args.cache_command == "reset":
+            # Reset the database by forcing a recreation
+            if not parsed_args.force:
+                confirm = input("This will completely delete and recreate the database. Continue? (y/N): ")
+                if confirm.lower() not in ["y", "yes"]:
+                    print("Database reset canceled.")
+                    return 0
+            
+            # Recreate the database
+            server.db._initialize_database()
+            print("Database has been reset successfully.")
             return 0
 
         elif parsed_args.cache_command == "stats":

@@ -17,10 +17,17 @@ class WebCache(Base):
 
     __tablename__ = "web_cache"
 
-    url = Column(String, primary_key=True)
+    # Primary key is now a combination of URL and feature flags
+    id = Column(String, primary_key=True)
+    url = Column(String, index=True)
     content = Column(Text)
     markdown_content = Column(Text)
     timestamp = Column(Integer)
+    
+    # Feature flags used to generate this cache entry
+    prefer_raw = Column(Integer, default=1)  # 1=True, 0=False
+    include_navigation = Column(Integer, default=0)  # 1=True, 0=False
+    content_priority = Column(String, default="auto")
 
 
 class Database:
@@ -29,19 +36,37 @@ class Database:
     def __init__(self, db_path: str):
         """
         Initialize the database handler.
+        
+        Note: Each time you update to a new version, you may need to delete
+        the database file at the path specified and let it recreate.
 
         Args:
             db_path: Path to the SQLite database file
         """
+        self.db_path = db_path
         self.db_url = f"sqlite:///{db_path}"
         self.engine = create_engine(self.db_url)
         self.SessionLocal = sessionmaker(
             autocommit=False, autoflush=False, bind=self.engine
         )
 
-        # Create tables if they don't exist
-        Base.metadata.create_all(bind=self.engine)
+        # Initialize database tables
+        self._initialize_database()
 
+    def _initialize_database(self):
+        """
+        Initialize database tables.
+        
+        Note: For schema changes, it's best to delete the old database file and start fresh.
+        """
+        # Drop existing tables if they exist
+        Base.metadata.drop_all(bind=self.engine)
+        
+        # Create fresh tables
+        Base.metadata.create_all(bind=self.engine)
+        
+        print(f"Database initialized at: {self.db_path}")
+    
     def get_session(self) -> Session:
         """
         Get a new database session.
@@ -51,19 +76,49 @@ class Database:
         """
         return self.SessionLocal()
 
-    def get_cached_content(self, url: str) -> Optional[Dict[str, Any]]:
+    def _generate_cache_id(self, url: str, prefer_raw: bool = True, include_navigation: bool = False,
+                          content_priority: str = "auto") -> str:
+        """
+        Generate a unique cache ID based on URL and feature flags.
+        
+        Args:
+            url: Normalized URL
+            prefer_raw: Whether raw GitHub content is preferred
+            include_navigation: Whether navigation is included (set to True when navigating between pages or traversing a website)
+            content_priority: Content extraction strategy
+            
+        Returns:
+            A unique cache ID string
+        """
+        # Convert bool flags to strings
+        raw_flag = "1" if prefer_raw else "0"
+        nav_flag = "1" if include_navigation else "0" 
+        
+        # Create a composite key
+        return f"{url}|{raw_flag}|{nav_flag}|{content_priority}"
+
+    def get_cached_content(self, url: str, prefer_raw: bool = True, include_navigation: bool = False,
+                           content_priority: str = "auto") -> Optional[Dict[str, Any]]:
         """
         Retrieve content from cache if available.
 
         Args:
             url: Normalized URL to look up in cache
+            prefer_raw: Whether raw GitHub content is preferred
+            include_navigation: Whether navigation is included (set to True when navigating between pages or traversing a website)
+            content_priority: Content extraction strategy
 
         Returns:
             Dictionary with cached content or None if not in cache
         """
+        # Generate cache ID
+        cache_id = self._generate_cache_id(
+            url, prefer_raw, include_navigation, content_priority
+        )
+        
         with self.get_session() as session:
             cache_entry = session.execute(
-                select(WebCache).where(WebCache.url == url)
+                select(WebCache).where(WebCache.id == cache_id)
             ).scalar_one_or_none()
 
             if cache_entry:
@@ -72,11 +127,14 @@ class Database:
                     "markdown_content": cache_entry.markdown_content,
                     "cached": True,
                     "timestamp": cache_entry.timestamp,
+                    "html_content": cache_entry.content  # Added to support navigation extraction
                 }
 
         return None
 
-    def cache_content(self, url: str, content: str, markdown_content: str) -> None:
+    def cache_content(self, url: str, content: str, markdown_content: str, 
+                     prefer_raw: bool = True, include_navigation: bool = False,
+                     content_priority: str = "auto") -> None:
         """
         Store content in cache.
 
@@ -84,12 +142,20 @@ class Database:
             url: Normalized URL to use as key
             content: Raw HTML content
             markdown_content: Converted markdown content
+            prefer_raw: Whether raw GitHub content is preferred
+            include_navigation: Whether navigation is included (set to True when navigating between pages or traversing a website)
+            content_priority: Content extraction strategy
         """
         current_time = int(time.time())
+        
+        # Generate cache ID
+        cache_id = self._generate_cache_id(
+            url, prefer_raw, include_navigation, content_priority
+        )
 
         with self.get_session() as session:
             cache_entry = session.execute(
-                select(WebCache).where(WebCache.url == url)
+                select(WebCache).where(WebCache.id == cache_id)
             ).scalar_one_or_none()
 
             if cache_entry:
@@ -100,10 +166,14 @@ class Database:
             else:
                 # Create new entry
                 new_entry = WebCache(
+                    id=cache_id,
                     url=url,
                     content=content,
                     markdown_content=markdown_content,
                     timestamp=current_time,
+                    prefer_raw=1 if prefer_raw else 0,
+                    include_navigation=1 if include_navigation else 0,
+                    content_priority=content_priority
                 )
                 session.add(new_entry)
 
