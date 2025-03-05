@@ -40,6 +40,16 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Transport to use for MCP server (default: stdio)",
     )
     server_parser.add_argument("--db-path", help="Custom path for the database")
+    server_parser.add_argument(
+        "--no-raw", 
+        action="store_true",
+        help="Disable automatic use of raw GitHub content",
+    )
+    server_parser.add_argument(
+        "--no-navigation", 
+        action="store_true",
+        help="Disable extraction and inclusion of navigation structures",
+    )
 
     # Cache commands
     cache_parser = subparsers.add_parser("cache", help="Cache management commands")
@@ -78,7 +88,9 @@ def main(args: Optional[List[str]] = None) -> int:
 
     # Create configuration
     config = BrowserConfig(
-        custom_db_path=parsed_args.db_path if hasattr(parsed_args, "db_path") else None
+        custom_db_path=parsed_args.db_path if hasattr(parsed_args, "db_path") else None,
+        prefer_raw=not parsed_args.no_raw if hasattr(parsed_args, "no_raw") else True,
+        include_navigation=not parsed_args.no_navigation if hasattr(parsed_args, "no_navigation") else True
     )
 
     if parsed_args.command == "server":

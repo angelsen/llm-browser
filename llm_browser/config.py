@@ -11,15 +11,24 @@ from typing import Optional
 class BrowserConfig:
     """Configuration class for LLM Browser."""
 
-    def __init__(self, custom_db_path: Optional[str] = None):
+    def __init__(
+        self, 
+        custom_db_path: Optional[str] = None,
+        prefer_raw: bool = True,
+        include_navigation: bool = True
+    ):
         """
         Initialize browser configuration.
 
         Args:
             custom_db_path: Optional custom path for the database
+            prefer_raw: If True, use raw GitHub content when available
+            include_navigation: If True, include navigation structure in results
         """
         self.user_agent = "llm-web-browser/0.1.0"
         self.db_path = custom_db_path or self._get_default_db_path()
+        self.prefer_raw = prefer_raw
+        self.include_navigation = include_navigation
 
     def _get_default_db_path(self) -> str:
         """

@@ -10,8 +10,14 @@ from mcp.server.fastmcp import FastMCP
 from llm_browser.config import BrowserConfig
 from llm_browser.models import Database
 from llm_browser.utils.grep import GrepOptions, grep_content
-from llm_browser.utils.html import html_to_markdown, extract_title
-from llm_browser.utils.url import normalize_url, is_valid_url
+from llm_browser.utils.html import (
+    html_to_markdown, 
+    extract_title, 
+    extract_navigation, 
+    format_navigation_as_markdown,
+    find_github_source_link
+)
+from llm_browser.utils.url import normalize_url, is_valid_url, github_url_to_raw, is_github_url
 
 
 class BrowserServer:
@@ -42,6 +48,8 @@ class BrowserServer:
             invert_match: bool = False,
             show_line_numbers: bool = False,
             whole_words: bool = False,
+            prefer_raw: bool = None,
+            include_navigation: bool = None,
         ) -> str:
             """
             Fetch a webpage and convert it to markdown, optionally filtering with grep-like functionality.
@@ -53,11 +61,30 @@ class BrowserServer:
                 invert_match: If True, show non-matching lines (like grep -v)
                 show_line_numbers: If True, show line numbers with results (like grep -n)
                 whole_words: If True, match whole words only (like grep -w)
+                prefer_raw: If True, use raw GitHub content when available (default: True)
+                include_navigation: If True, include navigation structure when available (default: True)
             """
+            # Use configuration defaults if not specified
+            use_prefer_raw = prefer_raw if prefer_raw is not None else self.config.prefer_raw
+            use_include_navigation = include_navigation if include_navigation is not None else self.config.include_navigation
+            
             # Validate URL
             if not is_valid_url(url):
                 return f"Invalid URL: {url}"
-
+            
+            # Check if this is a GitHub URL directly
+            if is_github_url(url) and use_prefer_raw:
+                # Convert directly to raw URL if it's a GitHub URL
+                raw_url = github_url_to_raw(url)
+                # Fetch the raw content
+                raw_content = await self._fetch_url(raw_url)
+                if raw_content:
+                    # Extract filename from the URL for the title
+                    filename = url.split("/")[-1].split("?")[0]
+                    content = f"# {filename}\n\n{raw_content}"
+                    return f"### Content from GitHub source: {url}\n\n{content}"
+                    
+            # For non-GitHub URLs or if raw fetch failed, proceed normally
             # Normalize the URL before checking cache
             normalized_url = normalize_url(url)
 
@@ -67,17 +94,63 @@ class BrowserServer:
             if cached:
                 content = cached["markdown_content"]
                 source = "cache"
+                html_content = cached.get("html_content", "")  # May need for navigation extraction
             else:
                 # Fetch and process if not in cache
                 html_content = await self._fetch_url(url)
                 if not html_content:
                     return f"Failed to fetch content from {url}"
 
+                # Check for GitHub source links when prefer_raw is enabled
+                github_link = None
+                if use_prefer_raw:
+                    github_link = find_github_source_link(html_content)
+                
+                # If we found a GitHub source link, fetch its raw content
+                if github_link and github_link.get("raw_url"):
+                    raw_url = github_link["raw_url"]
+                    raw_content = await self._fetch_url(raw_url)
+                    
+                    if raw_content:
+                        # For GitHub raw content, create markdown directly from the raw content
+                        content = raw_content
+                        
+                        # Extract navigation from the original HTML if requested
+                        if use_include_navigation:
+                            nav_sections = extract_navigation(html_content)
+                            if nav_sections:
+                                nav_markdown = format_navigation_as_markdown(nav_sections)
+                                if nav_markdown:
+                                    content = f"{nav_markdown}\n---\n\n{content}"
+                        
+                        # Add a title if needed
+                        if not content.startswith("# "):
+                            # Extract title from original HTML or use filename
+                            title = extract_title(html_content) or raw_url.split("/")[-1]
+                            content = f"# {title}\n\n{content}"
+                        
+                        # Cache the results
+                        self.db.cache_content(normalized_url, html_content, content)
+                        
+                        source = "github_raw"
+                        
+                        # Skip further processing
+                        return f"### Content from {url} (source: GitHub raw content)\n\n{content}"
+                
+                # If no GitHub source or raw fetch failed, process normally
                 # Extract title
                 title = extract_title(html_content) or url
 
                 # Convert to markdown
                 markdown_content = html_to_markdown(html_content)
+                
+                # Extract navigation if requested
+                if use_include_navigation:
+                    nav_sections = extract_navigation(html_content)
+                    if nav_sections:
+                        nav_markdown = format_navigation_as_markdown(nav_sections)
+                        if nav_markdown:
+                            markdown_content = f"{nav_markdown}\n---\n\n{markdown_content}"
 
                 # Add title to the markdown
                 content = f"# {title}\n\n{markdown_content}"

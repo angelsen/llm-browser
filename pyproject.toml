@@ -9,9 +9,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
-authors = [
-    {name = "Fredrik Angelsen", email = "fredrikangelsen@gmail.com"}
-]
+authors = [{ name = "Fredrik Angelsen", email = "fredrikangelsen@gmail.com" }]
 dependencies = [
     "beautifulsoup4>=4.13.3",
     "httpx>=0.28.1",
@@ -22,10 +20,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
-    "pytest>=8.3.4",
-    "ruff>=0.9.9",
-]
+dev = ["ipykernel>=6.29.5", "pytest>=8.3.4", "ruff>=0.9.9"]
 
 [project.scripts]
 llm-browser = "llm_browser.cli:main"
