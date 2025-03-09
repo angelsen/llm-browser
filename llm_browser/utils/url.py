@@ -110,7 +110,7 @@ def is_valid_url(url: str) -> bool:
 
 def github_url_to_raw(github_url: str) -> str:
     """
-    Convert a GitHub URL (edit or blob) to its raw.githubusercontent.com equivalent.
+    Convert a GitHub URL (edit, blob, or tree) to its raw.githubusercontent.com equivalent.
     
     Args:
         github_url: A GitHub URL pointing to a file
@@ -139,6 +139,13 @@ def github_url_to_raw(github_url: str) -> str:
         raw_url = base_url.replace("github.com", "raw.githubusercontent.com")
         raw_url = raw_url.replace("/blob/", "/")
         return raw_url + query
+    
+    # Handle tree links (often used in "Edit this page" links)
+    elif "/tree/" in base_url:
+        # Replace github.com with raw.githubusercontent.com and /tree/ with /
+        raw_url = base_url.replace("github.com", "raw.githubusercontent.com")
+        raw_url = raw_url.replace("/tree/", "/")
+        return raw_url + query
         
     return github_url
 
@@ -153,4 +160,4 @@ def is_github_url(url: str) -> bool:
     Returns:
         True if URL is a GitHub file URL, False otherwise
     """
-    return "github.com" in url and ("/blob/" in url or "/edit/" in url)
+    return "github.com" in url and ("/blob/" in url or "/edit/" in url or "/tree/" in url)

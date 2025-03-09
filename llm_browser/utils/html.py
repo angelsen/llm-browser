@@ -404,6 +404,10 @@ def extract_links_enhanced(html: str) -> List[Dict]:
                 link_data["is_github_blob"] = True
                 from llm_browser.utils.url import github_url_to_raw
                 link_data["raw_url"] = github_url_to_raw(href)
+            elif "/tree/" in href:
+                link_data["is_github_tree"] = True
+                from llm_browser.utils.url import github_url_to_raw
+                link_data["raw_url"] = github_url_to_raw(href)
                 
         # Check for common edit link texts
         edit_phrases = ["edit this page", "edit on github", "contribute to this page", "view source"]
@@ -426,14 +430,14 @@ def find_github_source_link(html: str) -> Optional[Dict]:
     """
     links = extract_links_enhanced(html)
     
-    # First, look for GitHub edit/blob links that explicitly mention editing
+    # First, look for GitHub edit/blob/tree links that explicitly mention editing
     for link in links:
-        if (link["is_github_edit"] or link["is_github_blob"]) and link["is_edit_link"]:
+        if (link["is_github_edit"] or link["is_github_blob"] or link.get("is_github_tree", False)) and link["is_edit_link"]:
             return link
     
-    # Next, look for any GitHub edit/blob links
+    # Next, look for any GitHub edit/blob/tree links
     for link in links:
-        if link["is_github_edit"] or link["is_github_blob"]:
+        if link["is_github_edit"] or link["is_github_blob"] or link.get("is_github_tree", False):
             return link
     
     # Finally, try any GitHub link
