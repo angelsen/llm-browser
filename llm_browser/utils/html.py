@@ -40,6 +40,20 @@ def html_to_markdown(html_content: str, content_priority: str = "auto") -> str:
         # Parse with BeautifulSoup for preprocessing
         soup = BeautifulSoup(main_content_html, "html.parser")
         
+        # Filter out binary images (images with data URLs containing binary data)
+        for img in soup.find_all("img"):
+            src = img.get("src", "")
+            if src.startswith("data:image/") and any(enc in src for enc in [";base64,", "%"]):
+                # Replace with alt text or remove if no alt text
+                alt_text = img.get("alt", "")
+                if alt_text:
+                    # Create a text node with the alt text
+                    new_text = soup.new_string(f"[Image: {alt_text}]")
+                    img.replace_with(new_text)
+                else:
+                    # Just remove the image if no alt text
+                    img.decompose()
+        
         # Enhance code blocks with proper formatting and language hints
         for pre in soup.find_all("pre"):
             # Check if there's a code element inside
